@@ -14,7 +14,8 @@ import pandas as pd
 from typing import List, Dict, Any
 
 
-class ConfigManager:
+class SpotifyAPIManager:
+
     """
         This class is used to manage the configuration file.
         self.config is a configparser.ConfigParser object.
@@ -22,6 +23,7 @@ class ConfigManager:
         config_file is the path to the configuration file.
         config_file is optional and defaults to "spotifyAPI.ini" if not provided.
     """
+
     def __init__(self, config_file: str = "spotifyAPI.ini") -> None:
 
         """Initialize the ConfigManager object."""
@@ -74,7 +76,7 @@ class ConfigManager:
 
         self.sp = spotipy.Spotify(client_credentials_manager=client_credentials_manager)
 
-        playlist_url = "https://open.spotify.com/playlist/5grpuCKriEOpBQ8hx4wCbx?si=70cd8a40d98f472a"
+        playlist_url = "https://open.spotify.com/playlist/5grpuCKriEOpBQ8hx4wCbx?si=95e7268ff343492f"
         playlist_id = playlist_url.split("/")[-1].split("?")[0]
 
         # Get the list of songs in a playlist
@@ -107,41 +109,49 @@ class ConfigManager:
 
     def data_acquisition(self):
 
-        process_count = 0
+        if not self.ids:
+            print("No track IDs found. Skipping data acquisition.")
+            return
 
-        # Get data for 100 songs in the playlist
-        for i in range(len(self.ids)):
+        print("Fetching audio features for all tracks in batches...")
+        all_features = []
+
+        for i in range(0, len(self.ids), 100):
+            chunk = self.ids[i:i + 100]
+
             while True:
                 try:
-                    # Store the id in track_id and get the song data
-                    track_id = self.id_myList["ID"][i]
-                    track = self.sp.audio_features(track_id)
+                    tracks_features = self.sp.audio_features(tracks=chunk)
+
+                    valid_features = [t for t in tracks_features if t is not None]
+                    all_features.extend(valid_features)
+
+                    print(
+                        f"Fetched features for batch {i // 100 + 1} ({len(chunk)} \
+                        tracks requested, {len(valid_features)} found)"
+                    )
                     break
 
                 except spotipy.client.SpotifyException as err:
-                    # # If the Spotify API returns a 429 error (too many requests)
                     if err.http_status == 429:
-                        # Get the time to wait before retrying (default is 1 second)
                         retry_after = int(err.headers.get("Retry-After", 1))
-                        # Wait for a specified time
+                        print(f"Rate limit hit. Waiting for {retry_after} seconds...")
                         time.sleep(retry_after)
-
-                    elif err.http_status == 403:
-                        print(f"Skipping track (unauthorized): {self.tracks[i]}")
-                        track = None
-                        break
-
                     else:
-                        print(f"Error: {err}")
-                        track = None
+                        print(f"Error fetching features: {err}")
                         break
 
-            # Store the acquired music data in a list
-            self.track_list.append(track)
+                except Exception as e:
+                    print(f"A non-Spotipy error occurred: {e}")
+                    break
 
-        # Convert a list to a dataframe
-        df_myList = pd.concat([pd.DataFrame(t) for t in self.track_list], ignore_index=True)
+        if not all_features:
+            print("Could not fetch any valid audio features.")
+            return
+
+        df_myList = pd.DataFrame(all_features)
         df_myList.to_csv("df_myList.csv", index=False)
+        print(f"Successfully saved {len(all_features)} audio features to df_myList.csv")
 
     def __contains__(self, key: str) -> bool:
         return key in self.config["SPOTIFY"]
@@ -154,7 +164,7 @@ class ConfigManager:
 
 
 if __name__ == "__main__":
-    config = ConfigManager()
-    config.set_certification_info()
-    config.insert_music()
-    config.data_acquisition()
+    spotify_api_manager = SpotifyAPIManager()
+    spotify_api_manager.set_certification_info()
+    spotify_api_manager.insert_music()
+    spotify_api_manager.data_acquisition()
